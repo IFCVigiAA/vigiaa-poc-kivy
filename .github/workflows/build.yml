@@ -15,7 +15,7 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.10'
 
     - name: Instalar Dependências do Sistema Android
       run: |
@@ -23,10 +23,10 @@ jobs:
         sudo apt install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
 
     - name: Instalar Buildozer
-      run: pip install --user buildozer cython virtualenv
+      run: pip install --user buildozer "cython<3.0" virtualenv wheel
 
     - name: Gerar o APK com Buildozer
-      run: yes | ~/.local/bin/buildozer android debug
+      run: ~/.local/bin/buildozer android debug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
