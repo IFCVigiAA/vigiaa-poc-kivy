@@ -4,9 +4,39 @@ from kivymd.uix.screen import MDScreen
 from kivymd.uix.snackbar import Snackbar
 from kivy.clock import mainthread, Clock
 from kivy.utils import platform
-from plyer import gps
 import requests
 import threading
+
+# Importações do Android nativo (A Mágica do Pyjnius)
+if platform == 'android':
+    from jnius import autoclass, java_method, PythonJavaClass
+    from android.permissions import request_permissions, Permission
+    
+    Context = autoclass('android.content.Context')
+    LocationManager = autoclass('android.location.LocationManager')
+    Looper = autoclass('android.os.Looper')
+    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+    class LocationListener(PythonJavaClass):
+        __javainterfaces__ = ['android/location/LocationListener']
+
+        def __init__(self, callback):
+            super().__init__()
+            self.callback = callback
+
+        @java_method('(Landroid/location/Location;)V')
+        def onLocationChanged(self, location):
+            # Quando o Android achar a coordenada, manda pro Python
+            self.callback(location.getLatitude(), location.getLongitude())
+
+        @java_method('(Ljava/lang/String;)V')
+        def onProviderDisabled(self, provider): pass
+
+        @java_method('(Ljava/lang/String;)V')
+        def onProviderEnabled(self, provider): pass
+
+        @java_method('(Ljava/lang/String;ILandroid/os/Bundle;)V')
+        def onStatusChanged(self, provider, status, extras): pass
 
 KV = '''
 <FocusFormScreen>:
@@ -16,7 +46,7 @@ KV = '''
         orientation: "vertical"
 
         MDTopAppBar:
-            title: "Teste GPS Nativo"
+            title: "VigiAA - GPS Preciso"
             md_bg_color: 1, 1, 1, 1
             specific_text_color: 0, 0, 0, 1
             elevation: 1
@@ -30,7 +60,7 @@ KV = '''
 
                 MDRaisedButton:
                     id: btn_gps
-                    text: "Ligar Antena GPS"
+                    text: "Capturar Localização Exata"
                     icon: "crosshairs-gps"
                     md_bg_color: "#39BFEF"
                     text_color: 1, 1, 1, 1
@@ -46,7 +76,11 @@ KV = '''
 
                 MDTextField:
                     id: tf_cidade
-                    hint_text: "Município"
+                    hint_text: "Cidade"
+
+                MDTextField:
+                    id: tf_bairro
+                    hint_text: "Bairro"
 
                 MDTextField:
                     id: tf_rua
@@ -60,71 +94,89 @@ KV = '''
 class FocusFormScreen(MDScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.gps_lat = ""
-        self.gps_lon = ""
         self.gps_ativo = False
+        self.location_manager = None
+        self.listener = None
 
     def iniciar_gps(self):
         if self.gps_ativo:
-            self.parar_gps()
             return
 
-        self.ids.btn_gps.text = "Pedindo permissão..."
+        self.ids.btn_gps.text = "Acessando sensores..."
+        self.ids.btn_gps.disabled = True
         
         if platform == 'android':
-            from android.permissions import request_permissions, Permission
             request_permissions([Permission.ACCESS_FINE_LOCATION, Permission.ACCESS_COARSE_LOCATION], self.gps_callback)
         else:
             self.mostrar_aviso("O GPS Nativo só funciona no celular.")
-            self.ids.btn_gps.text = "Ligar Antena GPS"
+            self.ids.btn_gps.text = "Capturar Localização Exata"
+            self.ids.btn_gps.disabled = False
 
     def gps_callback(self, permissions, results):
         if all(results):
-            # Joga o comando para a Thread Principal do Kivy
-            Clock.schedule_once(self.ligar_antena, 0)
+            Clock.schedule_once(self.ligar_antena_nativa, 0)
         else:
             self.mostrar_aviso("Permissão negada.")
-            self.ids.btn_gps.text = "Ligar Antena GPS"
+            self.ids.btn_gps.text = "Capturar Localização Exata"
+            self.ids.btn_gps.disabled = False
 
     @mainthread
-    def ligar_antena(self, dt):
+    def ligar_antena_nativa(self, dt):
+        self.ids.btn_gps.text = "Triangulando posição..."
+        self.ids.btn_gps.md_bg_color = "#FF9800"
+        self.gps_ativo = True
+
         try:
-            gps.configure(on_location=self.on_location, on_status=self.on_status)
-            gps.start(minTime=1000, minDistance=1)
-            self.gps_ativo = True
-            self.ids.btn_gps.text = "Parar Busca (Demorando muito?)"
-            self.ids.btn_gps.md_bg_color = "red"
-            self.ids.lbl_gps_status.text = "Buscando... (Pode levar até 2 min no céu aberto)"
+            activity = PythonActivity.mActivity
+            self.location_manager = activity.getSystemService(Context.LOCATION_SERVICE)
+            self.listener = LocationListener(self.on_location_nativa)
+            
+            providers = self.location_manager.getProviders(True)
+            if not providers:
+                self.mostrar_aviso("Ligue a Localização (GPS) do celular!")
+                self.parar_gps()
+                return
+
+            # Aqui é o pulo do gato: Pede a localização pela REDE (Rápido e super preciso)
+            if self.location_manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER):
+                self.location_manager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER, 
+                    1000, 1.0, 
+                    self.listener, 
+                    Looper.getMainLooper()
+                )
+            
+            # E pede pelo SATÉLITE simultaneamente (O que responder primeiro ganha)
+            if self.location_manager.isProviderEnabled(LocationManager.GPS_PROVIDER):
+                self.location_manager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER, 
+                    1000, 1.0, 
+                    self.listener, 
+                    Looper.getMainLooper()
+                )
+
         except Exception as e:
-            self.mostrar_aviso(f"Erro no sensor: {e}")
+            self.mostrar_aviso(f"Erro nativo: {e}")
             self.parar_gps()
 
+    def on_location_nativa(self, lat, lon):
+        # Achou a localização! Desliga a antena pra não drenar a bateria
+        self.parar_gps()
+        Clock.schedule_once(lambda dt: self.processar_coordenadas(lat, lon), 0)
+
     def parar_gps(self):
-        try:
-            gps.stop()
-        except:
-            pass
+        if self.location_manager and self.listener:
+            self.location_manager.removeUpdates(self.listener)
         self.gps_ativo = False
-        self.ids.btn_gps.text = "Ligar Antena GPS"
-        self.ids.btn_gps.md_bg_color = "#39BFEF"
-        self.ids.lbl_gps_status.text = "Busca cancelada."
 
-    @mainthread
-    def on_location(self, **kwargs):
-        self.parar_gps() 
-        self.gps_lat = kwargs.get('lat')
-        self.gps_lon = kwargs.get('lon')
-        
-        self.ids.btn_gps.text = "Coordenada Capturada!"
+    def processar_coordenadas(self, lat, lon):
+        self.ids.btn_gps.text = "Localização Exata Capturada!"
         self.ids.btn_gps.icon = "check"
-        self.ids.btn_gps.md_bg_color = "green"
-        self.ids.lbl_gps_status.text = f"Lat: {self.gps_lat:.5f} | Lon: {self.gps_lon:.5f}"
+        self.ids.btn_gps.md_bg_color = "#4CAF50" # Verde
+        self.ids.lbl_gps_status.text = f"Lat: {lat:.5f} | Lon: {lon:.5f}"
         
-        threading.Thread(target=self.traduzir_coordenada, args=(self.gps_lat, self.gps_lon)).start()
-
-    @mainthread
-    def on_status(self, stype, status):
-        pass
+        # Manda a latitude e longitude pro satélite aberto traduzir na rua
+        threading.Thread(target=self.traduzir_coordenada, args=(lat, lon)).start()
 
     def traduzir_coordenada(self, lat, lon):
         try:
@@ -138,9 +190,18 @@ class FocusFormScreen(MDScreen):
 
     @mainthread
     def atualizar_campos_gps(self, addr):
-        self.ids.tf_cidade.text = addr.get("city", addr.get("town", ""))
+        # O OpenStreetMap retorna a cidade em um desses 3 campos
+        self.ids.tf_cidade.text = addr.get("city", addr.get("town", addr.get("village", "")))
+        
+        # O Bairro pode vir com esses 3 nomes diferentes
+        bairro = addr.get("suburb", addr.get("neighbourhood", addr.get("district", "")))
+        self.ids.tf_bairro.text = bairro
+        
+        # A rua
         self.ids.tf_rua.text = addr.get("road", "")
         self.ids.tf_cep.text = addr.get("postcode", "")
+        
+        self.ids.btn_gps.disabled = False
 
     @mainthread
     def mostrar_aviso(self, texto):
