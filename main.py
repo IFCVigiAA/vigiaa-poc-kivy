@@ -1,8 +1,8 @@
 from kivymd.app import MDApp
 from kivy.lang import Builder
 from kivymd.uix.screen import MDScreen
-from kivymd.uix.snackbar import Snackbar  # <--- CORRIGIDO AQUI
-from kivy.clock import mainthread
+from kivymd.uix.snackbar import Snackbar
+from kivy.clock import mainthread, Clock
 from kivy.utils import platform
 from plyer import gps
 import requests
@@ -62,10 +62,14 @@ class FocusFormScreen(MDScreen):
         super().__init__(**kwargs)
         self.gps_lat = ""
         self.gps_lon = ""
+        self.gps_ativo = False
 
     def iniciar_gps(self):
-        self.ids.btn_gps.text = "Pedindo permissão ao Android..."
-        self.ids.btn_gps.disabled = True
+        if self.gps_ativo:
+            self.parar_gps()
+            return
+
+        self.ids.btn_gps.text = "Pedindo permissão..."
         
         if platform == 'android':
             from android.permissions import request_permissions, Permission
@@ -73,29 +77,47 @@ class FocusFormScreen(MDScreen):
         else:
             self.mostrar_aviso("O GPS Nativo só funciona no celular.")
             self.ids.btn_gps.text = "Ligar Antena GPS"
-            self.ids.btn_gps.disabled = False
 
     def gps_callback(self, permissions, results):
         if all(results):
-            try:
-                gps.configure(on_location=self.on_location, on_status=self.on_status)
-                gps.start(minTime=1000, minDistance=1)
-                self.ids.lbl_gps_status.text = "Satélite conectado. Buscando coordenadas..."
-            except Exception as e:
-                self.mostrar_aviso(f"Erro no sensor: {e}")
+            # Joga o comando para a Thread Principal do Kivy
+            Clock.schedule_once(self.ligar_antena, 0)
         else:
             self.mostrar_aviso("Permissão negada.")
             self.ids.btn_gps.text = "Ligar Antena GPS"
-            self.ids.btn_gps.disabled = False
+
+    @mainthread
+    def ligar_antena(self, dt):
+        try:
+            gps.configure(on_location=self.on_location, on_status=self.on_status)
+            gps.start(minTime=1000, minDistance=1)
+            self.gps_ativo = True
+            self.ids.btn_gps.text = "Parar Busca (Demorando muito?)"
+            self.ids.btn_gps.md_bg_color = "red"
+            self.ids.lbl_gps_status.text = "Buscando... (Pode levar até 2 min no céu aberto)"
+        except Exception as e:
+            self.mostrar_aviso(f"Erro no sensor: {e}")
+            self.parar_gps()
+
+    def parar_gps(self):
+        try:
+            gps.stop()
+        except:
+            pass
+        self.gps_ativo = False
+        self.ids.btn_gps.text = "Ligar Antena GPS"
+        self.ids.btn_gps.md_bg_color = "#39BFEF"
+        self.ids.lbl_gps_status.text = "Busca cancelada."
 
     @mainthread
     def on_location(self, **kwargs):
-        gps.stop() 
+        self.parar_gps() 
         self.gps_lat = kwargs.get('lat')
         self.gps_lon = kwargs.get('lon')
         
         self.ids.btn_gps.text = "Coordenada Capturada!"
         self.ids.btn_gps.icon = "check"
+        self.ids.btn_gps.md_bg_color = "green"
         self.ids.lbl_gps_status.text = f"Lat: {self.gps_lat:.5f} | Lon: {self.gps_lon:.5f}"
         
         threading.Thread(target=self.traduzir_coordenada, args=(self.gps_lat, self.gps_lon)).start()
@@ -112,18 +134,16 @@ class FocusFormScreen(MDScreen):
             addr = res.get("address", {})
             self.atualizar_campos_gps(addr)
         except:
-            self.mostrar_aviso("Coordenada obtida, mas sem internet para traduzir a rua.")
+            self.mostrar_aviso("Sem internet para traduzir a rua.")
 
     @mainthread
     def atualizar_campos_gps(self, addr):
         self.ids.tf_cidade.text = addr.get("city", addr.get("town", ""))
         self.ids.tf_rua.text = addr.get("road", "")
         self.ids.tf_cep.text = addr.get("postcode", "")
-        self.ids.btn_gps.disabled = False
 
     @mainthread
     def mostrar_aviso(self, texto):
-        # <--- CORRIGIDO AQUI PARA A VERSÃO 1.2.0 --->
         Snackbar(text=texto).open()
 
 class VigiAAPoCApp(MDApp):
