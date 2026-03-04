@@ -1,13 +1,11 @@
 from kivymd.app import MDApp
 from kivy.lang import Builder
 from kivymd.uix.screen import MDScreen
-from kivymd.uix.snackbar import Snackbar
 from kivy.clock import mainthread, Clock
 from kivy.utils import platform
 import requests
 import threading
 
-# Importações do Android nativo (A Mágica do Pyjnius)
 if platform == 'android':
     from jnius import autoclass, java_method, PythonJavaClass
     from android.permissions import request_permissions, Permission
@@ -20,13 +18,14 @@ if platform == 'android':
     class LocationListener(PythonJavaClass):
         __javainterfaces__ = ['android/location/LocationListener']
 
-        def __init__(self, callback):
+        def __init__(self, callback, log_func):
             super().__init__()
             self.callback = callback
+            self.log_func = log_func
 
         @java_method('(Landroid/location/Location;)V')
         def onLocationChanged(self, location):
-            # Quando o Android achar a coordenada, manda pro Python
+            self.log_func("Sensor disparou! Recebendo dados...")
             self.callback(location.getLatitude(), location.getLongitude())
 
         @java_method('(Ljava/lang/String;)V')
@@ -46,7 +45,7 @@ KV = '''
         orientation: "vertical"
 
         MDTopAppBar:
-            title: "VigiAA - GPS Preciso"
+            title: "VigiAA - Debug GPS"
             md_bg_color: 1, 1, 1, 1
             specific_text_color: 0, 0, 0, 1
             elevation: 1
@@ -60,35 +59,36 @@ KV = '''
 
                 MDRaisedButton:
                     id: btn_gps
-                    text: "Capturar Localização Exata"
-                    icon: "crosshairs-gps"
+                    text: "Testar Localização"
+                    icon: "bug"
                     md_bg_color: "#39BFEF"
                     text_color: 1, 1, 1, 1
                     size_hint_x: 1
                     on_release: root.iniciar_gps()
 
-                MDLabel:
-                    id: lbl_gps_status
-                    text: "Aguardando..."
-                    halign: "center"
-                    theme_text_color: "Hint"
-                    font_style: "Caption"
-
                 MDTextField:
-                    id: tf_cidade
-                    hint_text: "Cidade"
+                    id: tf_rua
+                    hint_text: "Resultado Rua"
 
                 MDTextField:
                     id: tf_bairro
-                    hint_text: "Bairro"
+                    hint_text: "Resultado Bairro"
 
-                MDTextField:
-                    id: tf_rua
-                    hint_text: "Rua"
+                MDLabel:
+                    text: "Console de Debug:"
+                    font_style: "Caption"
+                    theme_text_color: "Hint"
 
-                MDTextField:
-                    id: tf_cep
-                    hint_text: "CEP"
+                # CAIXA DE TERMINAL PARA VER O QUE ESTÁ ACONTECENDO
+                TextInput:
+                    id: txt_log
+                    size_hint_y: None
+                    height: "200dp"
+                    readonly: True
+                    background_color: 0, 0, 0, 1
+                    foreground_color: 0, 1, 0, 1  # Letra verde tipo Matrix
+                    font_size: "12sp"
+                    text: "Pronto para iniciar...\\n"
 '''
 
 class FocusFormScreen(MDScreen):
@@ -98,69 +98,89 @@ class FocusFormScreen(MDScreen):
         self.location_manager = None
         self.listener = None
 
+    @mainthread
+    def log(self, texto):
+        self.ids.txt_log.text += f"> {texto}\\n"
+        print(texto)
+
     def iniciar_gps(self):
         if self.gps_ativo:
             return
-
-        self.ids.btn_gps.text = "Acessando sensores..."
+            
+        self.ids.txt_log.text = "" # Limpa o log
+        self.log("Botão pressionado.")
         self.ids.btn_gps.disabled = True
         
         if platform == 'android':
+            self.log("Pedindo permissão ao Android...")
             request_permissions([Permission.ACCESS_FINE_LOCATION, Permission.ACCESS_COARSE_LOCATION], self.gps_callback)
         else:
-            self.mostrar_aviso("O GPS Nativo só funciona no celular.")
-            self.ids.btn_gps.text = "Capturar Localização Exata"
+            self.log("Erro: Teste sendo feito no PC.")
             self.ids.btn_gps.disabled = False
 
     def gps_callback(self, permissions, results):
         if all(results):
+            self.log("Permissão CONCEDIDA.")
             Clock.schedule_once(self.ligar_antena_nativa, 0)
         else:
-            self.mostrar_aviso("Permissão negada.")
-            self.ids.btn_gps.text = "Capturar Localização Exata"
+            self.log("Permissão NEGADA pelo usuário.")
             self.ids.btn_gps.disabled = False
 
     @mainthread
     def ligar_antena_nativa(self, dt):
-        self.ids.btn_gps.text = "Triangulando posição..."
-        self.ids.btn_gps.md_bg_color = "#FF9800"
+        self.ids.btn_gps.text = "Lendo Sensores..."
         self.gps_ativo = True
 
         try:
+            self.log("Iniciando PythonActivity...")
             activity = PythonActivity.mActivity
             self.location_manager = activity.getSystemService(Context.LOCATION_SERVICE)
-            self.listener = LocationListener(self.on_location_nativa)
+            self.listener = LocationListener(self.on_location_nativa, self.log)
             
-            providers = self.location_manager.getProviders(True)
-            if not providers:
-                self.mostrar_aviso("Ligue a Localização (GPS) do celular!")
+            # 1. VERIFICA PROVEDORES LIGADOS
+            providers = self.location_manager.getProviders(True).toArray()
+            providers_list = [p for p in providers]
+            self.log(f"Provedores ativos: {providers_list}")
+
+            if not providers_list:
+                self.log("ERRO: Nenhum sensor ativo. Ligue o GPS!")
                 self.parar_gps()
                 return
 
-            # Aqui é o pulo do gato: Pede a localização pela REDE (Rápido e super preciso)
-            if self.location_manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER):
+            # 2. TENTA O CACHE INSTANTÂNEO (O TRUQUE DO UBER)
+            self.log("Buscando no cache rápido...")
+            loc_net = self.location_manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if loc_net:
+                self.log("Cache de REDE encontrado!")
+                self.on_location_nativa(loc_net.getLatitude(), loc_net.getLongitude())
+                return
+                
+            loc_gps = self.location_manager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            if loc_gps:
+                self.log("Cache de GPS encontrado!")
+                self.on_location_nativa(loc_gps.getLatitude(), loc_gps.getLongitude())
+                return
+
+            # 3. SE NÃO TEM CACHE, ESPERA ATUALIZAR
+            self.log("Sem cache. Pedindo dados ao vivo...")
+            if LocationManager.NETWORK_PROVIDER in providers_list:
+                self.log("Inscrito no provedor de REDE.")
                 self.location_manager.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER, 
-                    1000, 1.0, 
-                    self.listener, 
-                    Looper.getMainLooper()
-                )
+                    LocationManager.NETWORK_PROVIDER, 1000, 0.0, self.listener, Looper.getMainLooper())
             
-            # E pede pelo SATÉLITE simultaneamente (O que responder primeiro ganha)
-            if self.location_manager.isProviderEnabled(LocationManager.GPS_PROVIDER):
+            if LocationManager.GPS_PROVIDER in providers_list:
+                self.log("Inscrito no provedor de GPS.")
                 self.location_manager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER, 
-                    1000, 1.0, 
-                    self.listener, 
-                    Looper.getMainLooper()
-                )
+                    LocationManager.GPS_PROVIDER, 1000, 0.0, self.listener, Looper.getMainLooper())
+                    
+            self.log("Aguardando satélite (mexa o celular)...")
 
         except Exception as e:
-            self.mostrar_aviso(f"Erro nativo: {e}")
+            self.log(f"ERRO FATAL: {e}")
             self.parar_gps()
 
     def on_location_nativa(self, lat, lon):
-        # Achou a localização! Desliga a antena pra não drenar a bateria
+        self.log(f"Coordenadas pegas! Lat:{lat:.3f} Lon:{lon:.3f}")
         self.parar_gps()
         Clock.schedule_once(lambda dt: self.processar_coordenadas(lat, lon), 0)
 
@@ -168,14 +188,13 @@ class FocusFormScreen(MDScreen):
         if self.location_manager and self.listener:
             self.location_manager.removeUpdates(self.listener)
         self.gps_ativo = False
+        self.ids.btn_gps.disabled = False
+        self.ids.btn_gps.text = "Testar Novamente"
 
     def processar_coordenadas(self, lat, lon):
-        self.ids.btn_gps.text = "Localização Exata Capturada!"
-        self.ids.btn_gps.icon = "check"
-        self.ids.btn_gps.md_bg_color = "#4CAF50" # Verde
-        self.ids.lbl_gps_status.text = f"Lat: {lat:.5f} | Lon: {lon:.5f}"
-        
-        # Manda a latitude e longitude pro satélite aberto traduzir na rua
+        self.ids.btn_gps.text = "Sucesso!"
+        self.ids.btn_gps.md_bg_color = "#4CAF50"
+        self.log("Iniciando tradução na internet...")
         threading.Thread(target=self.traduzir_coordenada, args=(lat, lon)).start()
 
     def traduzir_coordenada(self, lat, lon):
@@ -185,27 +204,14 @@ class FocusFormScreen(MDScreen):
             res = requests.get(url, headers=headers).json()
             addr = res.get("address", {})
             self.atualizar_campos_gps(addr)
-        except:
-            self.mostrar_aviso("Sem internet para traduzir a rua.")
+        except Exception as e:
+            self.log(f"Erro traduzindo rua: {e}")
 
     @mainthread
     def atualizar_campos_gps(self, addr):
-        # O OpenStreetMap retorna a cidade em um desses 3 campos
-        self.ids.tf_cidade.text = addr.get("city", addr.get("town", addr.get("village", "")))
-        
-        # O Bairro pode vir com esses 3 nomes diferentes
-        bairro = addr.get("suburb", addr.get("neighbourhood", addr.get("district", "")))
-        self.ids.tf_bairro.text = bairro
-        
-        # A rua
+        self.log("Tradução concluída! Preenchendo tela.")
+        self.ids.tf_bairro.text = addr.get("suburb", addr.get("neighbourhood", addr.get("district", "")))
         self.ids.tf_rua.text = addr.get("road", "")
-        self.ids.tf_cep.text = addr.get("postcode", "")
-        
-        self.ids.btn_gps.disabled = False
-
-    @mainthread
-    def mostrar_aviso(self, texto):
-        Snackbar(text=texto).open()
 
 class VigiAAPoCApp(MDApp):
     def build(self):
