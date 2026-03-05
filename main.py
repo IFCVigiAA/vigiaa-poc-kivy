@@ -7,7 +7,7 @@ from kivy.utils import platform
 import requests
 import threading
 
-# --- A MÁGICA DO GPS NATIVO QUE FUNCIONOU ---
+# --- O MOTOR DO GPS (QUE JÁ VIMOS QUE FUNCIONA) ---
 if platform == 'android':
     from jnius import autoclass, java_method, PythonJavaClass
     from android.permissions import request_permissions, Permission
@@ -37,115 +37,182 @@ if platform == 'android':
         @java_method('(Ljava/lang/String;ILandroid/os/Bundle;)V')
         def onStatusChanged(self, provider, status, extras): pass
 
-# --- O VISUAL DO FORMULÁRIO DE DENGUE ---
+# --- O VISUAL FIEL AO SEU PROTÓTIPO ---
 KV = '''
 <FocusFormScreen>:
-    md_bg_color: 0.95, 0.95, 0.95, 1  # Fundo levemente cinza para destacar o formulário
+    md_bg_color: 1, 1, 1, 1  # Fundo totalmente branco
 
     MDBoxLayout:
         orientation: "vertical"
 
+        # BARRA SUPERIOR BRANCA
         MDTopAppBar:
-            title: "Registrar Foco - VigiAA"
-            md_bg_color: "#1976D2" # Azul profissional
-            specific_text_color: 1, 1, 1, 1
-            elevation: 2
+            title: "Focos de mosquitos"
+            md_bg_color: 1, 1, 1, 1
+            specific_text_color: 0, 0, 0, 1
+            elevation: 0
+            left_action_items: [["chevron-left", lambda x: root.voltar()]]
 
         ScrollView:
             MDBoxLayout:
                 orientation: "vertical"
                 padding: "20dp"
-                spacing: "15dp"
+                spacing: "20dp"
                 adaptive_height: True
 
-                # SESSÃO 1: DADOS DO FOCO
-                MDCard:
-                    orientation: "vertical"
-                    padding: "15dp"
-                    spacing: "10dp"
+                # BOTÃO DO GPS
+                MDRaisedButton:
+                    id: btn_gps
+                    text: "Capturar localização pelo GPS"
+                    icon: "map-marker"
+                    md_bg_color: "#39BFEF" # Azul ciano do protótipo
+                    text_color: 1, 1, 1, 1
+                    size_hint_x: 0.9
+                    pos_hint: {"center_x": .5}
+                    elevation: 0
+                    on_release: root.iniciar_gps()
+
+                # AVISO OBRIGATÓRIO
+                MDLabel:
+                    text: "Campos marcos com [color=#FF0000]*[/color] são obrigatórios"
+                    markup: True
+                    font_style: "Caption"
+                    theme_text_color: "Custom"
+                    text_color: 0.3, 0.3, 0.3, 1
+
+                # FORMULÁRIO (Lado a Lado)
+                # CEP
+                MDBoxLayout:
                     adaptive_height: True
-                    radius: [10, 10, 10, 10]
-                    elevation: 1
-
                     MDLabel:
-                        text: "Detalhes do Foco"
-                        font_style: "H6"
-                        theme_text_color: "Primary"
-
+                        text: "CEP"
+                        bold: True
+                        size_hint_x: 0.35
+                        font_style: "Body2"
                     MDTextField:
-                        id: tf_tipo
-                        hint_text: "Tipo de Recipiente (ex: Pneu, Vaso, Caixa)"
-                        icon_left: "delete-variant"
-
-                    MDTextField:
-                        id: tf_qtd
-                        hint_text: "Quantidade Encontrada"
-                        input_filter: "int"
-                        icon_left: "counter"
-
-                    MDTextField:
-                        id: tf_obs
-                        hint_text: "Observações Adicionais"
-                        multiline: True
-                        icon_left: "text-box-outline"
-
-                # SESSÃO 2: LOCALIZAÇÃO
-                MDCard:
-                    orientation: "vertical"
-                    padding: "15dp"
-                    spacing: "10dp"
+                        id: tf_cep
+                        hint_text: "Digite o CEP"
+                        size_hint_x: 0.65
+                
+                # MUNICÍPIO
+                MDBoxLayout:
                     adaptive_height: True
-                    radius: [10, 10, 10, 10]
-                    elevation: 1
-
                     MDLabel:
-                        text: "Endereço da Ocorrência"
-                        font_style: "H6"
-                        theme_text_color: "Primary"
-
-                    MDRaisedButton:
-                        id: btn_gps
-                        text: "Capturar Localização Exata"
-                        icon: "crosshairs-gps"
-                        md_bg_color: "#FF9800" # Laranja chamativo
-                        size_hint_x: 1
-                        on_release: root.iniciar_gps()
-
-                    MDLabel:
-                        id: lbl_gps_status
-                        text: "Toque no botão para preencher automaticamente."
-                        theme_text_color: "Hint"
-                        font_style: "Caption"
-                        halign: "center"
-
-                    MDTextField:
-                        id: tf_rua
-                        hint_text: "Rua"
-                    
-                    MDBoxLayout:
-                        spacing: "10dp"
-                        adaptive_height: True
-                        MDTextField:
-                            id: tf_numero
-                            hint_text: "Número"
-                            size_hint_x: 0.3
-                        MDTextField:
-                            id: tf_bairro
-                            hint_text: "Bairro"
-                            size_hint_x: 0.7
-
+                        text: "MUNICÍPIO[color=#FF0000]*[/color]"
+                        markup: True
+                        bold: True
+                        size_hint_x: 0.35
+                        font_style: "Body2"
                     MDTextField:
                         id: tf_cidade
-                        hint_text: "Cidade"
+                        hint_text: "Selecione a cidade"
+                        icon_right: "chevron-down"
+                        size_hint_x: 0.65
 
-                # BOTÃO FINAL DE SALVAR
-                MDRaisedButton:
-                    text: "SALVAR REGISTRO"
-                    icon: "content-save"
-                    md_bg_color: "#4CAF50" # Verde sucesso
-                    size_hint_x: 1
-                    font_size: "18sp"
-                    on_release: root.salvar_dados()
+                # BAIRRO
+                MDBoxLayout:
+                    adaptive_height: True
+                    MDLabel:
+                        text: "BAIRRO[color=#FF0000]*[/color]"
+                        markup: True
+                        bold: True
+                        size_hint_x: 0.35
+                        font_style: "Body2"
+                    MDTextField:
+                        id: tf_bairro
+                        hint_text: "Selecione o bairro"
+                        icon_right: "chevron-down"
+                        size_hint_x: 0.65
+
+                # RUA
+                MDBoxLayout:
+                    adaptive_height: True
+                    MDLabel:
+                        text: "RUA[color=#FF0000]*[/color]"
+                        markup: True
+                        bold: True
+                        size_hint_x: 0.35
+                        font_style: "Body2"
+                    MDTextField:
+                        id: tf_rua
+                        hint_text: "Digite o nome da rua"
+                        icon_right: "magnify"
+                        size_hint_x: 0.65
+
+                # NÚMERO
+                MDBoxLayout:
+                    adaptive_height: True
+                    MDLabel:
+                        text: "NÚMERO[color=#FF0000]*[/color]"
+                        markup: True
+                        bold: True
+                        size_hint_x: 0.35
+                        font_style: "Body2"
+                    MDTextField:
+                        id: tf_numero
+                        hint_text: "Digite o número"
+                        input_filter: "int"
+                        size_hint_x: 0.65
+
+                # DESCRIÇÃO
+                MDBoxLayout:
+                    adaptive_height: True
+                    MDLabel:
+                        text: "DESCRIÇÃO"
+                        bold: True
+                        size_hint_x: 0.35
+                        font_style: "Body2"
+                        pos_hint: {"top": 1}
+                    MDTextField:
+                        id: tf_desc
+                        hint_text: "Descreva a situação do local.\\nObs: não se identifique de nenhuma forma"
+                        multiline: True
+                        size_hint_x: 0.65
+
+                # SESSÃO IMAGENS
+                MDLabel:
+                    text: "IMAGENS"
+                    bold: True
+                    font_style: "Body2"
+                    padding_y: "10dp"
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: "15dp"
+                    adaptive_height: True
+                    
+                    # Botão quadrado cinza de Imagem
+                    MDRaisedButton:
+                        text: "+"
+                        font_size: "32sp"
+                        md_bg_color: 0.85, 0.85, 0.85, 1
+                        text_color: 0.3, 0.3, 0.3, 1
+                        elevation: 0
+                        size_hint: None, None
+                        size: "80dp", "80dp"
+                        
+                    MDLabel:
+                        text: "Adicionar imagem"
+                        theme_text_color: "Hint"
+
+                # Um espaço extra para o botão de Cadastrar não ficar colado
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: "40dp"
+
+        # BOTÃO FIXO NO RODAPÉ
+        MDBoxLayout:
+            padding: ["20dp", "10dp", "20dp", "20dp"]
+            adaptive_height: True
+            MDRaisedButton:
+                text: "CADASTRAR"
+                md_bg_color: "#39BFEF"
+                text_color: 1, 1, 1, 1
+                size_hint_x: 1
+                font_size: "16sp"
+                elevation: 0
+                padding: "15dp"
+                on_release: root.cadastrar()
 '''
 
 class FocusFormScreen(MDScreen):
@@ -154,8 +221,9 @@ class FocusFormScreen(MDScreen):
         self.gps_ativo = False
         self.location_manager = None
         self.listener = None
-        self.lat = ""
-        self.lon = ""
+
+    def voltar(self):
+        self.mostrar_aviso("Voltando para tela inicial...")
 
     def iniciar_gps(self):
         if self.gps_ativo:
@@ -170,7 +238,7 @@ class FocusFormScreen(MDScreen):
         else:
             self.mostrar_aviso("O GPS Nativo só funciona no celular.")
             self.ids.btn_gps.disabled = False
-            self.ids.btn_gps.text = "Capturar Localização Exata"
+            self.ids.btn_gps.text = "Capturar localização pelo GPS"
 
     def gps_callback(self, permissions, results):
         if all(results):
@@ -178,19 +246,19 @@ class FocusFormScreen(MDScreen):
         else:
             self.mostrar_aviso("Permissão de GPS negada.")
             self.ids.btn_gps.disabled = False
-            self.ids.btn_gps.text = "Capturar Localização Exata"
+            self.ids.btn_gps.text = "Capturar localização pelo GPS"
 
     @mainthread
     def ligar_antena_nativa(self, dt):
         self.gps_ativo = True
-        self.ids.lbl_gps_status.text = "Buscando sinal..."
+        self.ids.btn_gps.text = "Buscando sinal..."
 
         try:
             activity = PythonActivity.mActivity
             self.location_manager = activity.getSystemService(Context.LOCATION_SERVICE)
             self.listener = LocationListener(self.on_location_nativa)
             
-            # TENTA O CACHE INSTANTÂNEO PRIMEIRO
+            # Cache Rápido
             loc_net = self.location_manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             if loc_net:
                 self.on_location_nativa(loc_net.getLatitude(), loc_net.getLongitude())
@@ -201,7 +269,7 @@ class FocusFormScreen(MDScreen):
                 self.on_location_nativa(loc_gps.getLatitude(), loc_gps.getLongitude())
                 return
 
-            # SE NÃO TEM CACHE, ESPERA ATUALIZAR AO VIVO
+            # Busca ao vivo
             providers = self.location_manager.getProviders(True).toArray()
             providers_list = [p for p in providers]
 
@@ -212,7 +280,7 @@ class FocusFormScreen(MDScreen):
                 self.location_manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0.0, self.listener, Looper.getMainLooper())
 
         except Exception as e:
-            self.mostrar_aviso("Falha ao ligar antena do celular.")
+            self.mostrar_aviso("Falha ao ligar antena.")
             self.parar_gps()
 
     def on_location_nativa(self, lat, lon):
@@ -226,12 +294,7 @@ class FocusFormScreen(MDScreen):
 
     @mainthread
     def processar_coordenadas(self, lat, lon):
-        self.lat = lat
-        self.lon = lon
-        self.ids.btn_gps.text = "Localização Capturada!"
-        self.ids.btn_gps.md_bg_color = "#4CAF50" # Verde
-        self.ids.lbl_gps_status.text = "Traduzindo coordenadas na internet..."
-        
+        self.ids.btn_gps.text = "Traduzindo Endereço..."
         threading.Thread(target=self.traduzir_coordenada, args=(lat, lon)).start()
 
     def traduzir_coordenada(self, lat, lon):
@@ -242,32 +305,37 @@ class FocusFormScreen(MDScreen):
             addr = res.get("address", {})
             self.atualizar_campos_gps(addr)
         except:
-            self.mostrar_aviso("Sem internet para traduzir a rua.")
+            self.mostrar_aviso("Sem internet para traduzir.")
             self.resetar_botao()
 
     @mainthread
     def atualizar_campos_gps(self, addr):
-        self.ids.tf_cidade.text = addr.get("city", addr.get("town", addr.get("village", "")))
-        self.ids.tf_bairro.text = addr.get("suburb", addr.get("neighbourhood", addr.get("district", "")))
-        self.ids.tf_rua.text = addr.get("road", "")
-        self.ids.lbl_gps_status.text = f"Lat: {self.lat:.5f} | Lon: {self.lon:.5f}"
+        # A nova "rede de segurança" para achar o nome do município e do bairro
+        cidade = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality") or ""
+        bairro = addr.get("suburb") or addr.get("neighbourhood") or addr.get("city_district") or addr.get("district") or addr.get("quarter") or addr.get("borough") or ""
+        rua = addr.get("road") or addr.get("street") or ""
+        cep = addr.get("postcode", "")
+
+        self.ids.tf_cidade.text = cidade
+        self.ids.tf_bairro.text = bairro
+        self.ids.tf_rua.text = rua
+        self.ids.tf_cep.text = cep
+        
+        self.ids.btn_gps.text = "Localização Preenchida!"
+        self.ids.btn_gps.icon = "check"
         self.ids.btn_gps.disabled = False
 
     @mainthread
     def resetar_botao(self):
-        self.ids.lbl_gps_status.text = "Preencha o restante manualmente se necessário."
+        self.ids.btn_gps.text = "Capturar localização pelo GPS"
         self.ids.btn_gps.disabled = False
 
-    def salvar_dados(self):
-        # Aqui ficará a lógica futura de enviar para o seu Django!
-        tipo = self.ids.tf_tipo.text
-        qtd = self.ids.tf_qtd.text
-        
-        if not tipo or not qtd:
-            self.mostrar_aviso("Preencha o tipo e a quantidade do foco!")
+    def cadastrar(self):
+        rua = self.ids.tf_rua.text
+        if not rua:
+            self.mostrar_aviso("Preencha os campos obrigatórios primeiro!")
             return
-            
-        self.mostrar_aviso(f"Sucesso! {qtd}x '{tipo}' prontos para envio ao banco de dados.")
+        self.mostrar_aviso("Cadastrando foco no banco de dados...")
 
     @mainthread
     def mostrar_aviso(self, texto):
@@ -275,7 +343,7 @@ class FocusFormScreen(MDScreen):
 
 class VigiAAApp(MDApp):
     def build(self):
-        self.theme_cls.primary_palette = "Blue"
+        self.theme_cls.primary_palette = "LightBlue"
         Builder.load_string(KV)
         return FocusFormScreen()
 
